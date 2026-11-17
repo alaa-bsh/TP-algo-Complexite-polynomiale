@@ -1,5 +1,6 @@
 import argparse
 import random
+from collections import deque
 from pathlib import Path
 
 SEED = 42
@@ -7,15 +8,11 @@ SEED = 42
 EXO1_SIZES = [100, 200, 300, 400, 500, 600, 700, 800, 900, 1000, 1200, 1500]
 EXO1_MAX_VALUE = 99
 
-EXO2_MAX_VALUE = 999999
-
-EXO2_VAR_A_SIZES = [(100, 100), (200, 200), (400, 400), (600, 600),
-                    (800, 800), (1000, 1000), (1500, 1500), (2000, 2000)]
-EXO2_VAR_A_B_SIZE = (10, 10)
-
-EXO2_VAR_B_A_SIZE = (1000, 1000)
-EXO2_VAR_B_SIZES = [(5, 5), (10, 10), (20, 20), (50, 50),
-                    (100, 100), (200, 200), (400, 400), (800, 800)]
+EXO2_MAX_VALUE = 99999
+EXO2_A_SIZES = [100, 200, 400, 600, 800, 1000, 2000, 4000, 6000, 8000]
+EXO2_THRESHOLD = 2000
+EXO2_B_SIZES_BELOW = [10, 20, 30, 40, 50]
+EXO2_B_SIZES_FROM = [100, 200, 300, 400, 500]
 
 
 def random_matrix(rng, rows, cols, max_value):
@@ -30,16 +27,14 @@ def write_matrix(path, matrix):
             file.write(" ".join(map(str, row)) + "\n")
 
 
-def block(matrix, row, col, height, width):
-    return [line[col:col + width] for line in matrix[row:row + height]]
-
-
 def generate_exo1(rng, out):
     folder = out / "exo1"
     folder.mkdir(parents=True, exist_ok=True)
     for n in EXO1_SIZES:
-        write_matrix(folder / f"A_{n}.txt", random_matrix(rng, n, n, EXO1_MAX_VALUE))
-        write_matrix(folder / f"B_{n}.txt", random_matrix(rng, n, n, EXO1_MAX_VALUE))
+        write_matrix(folder / f"A_{n}.txt",
+                     random_matrix(rng, n, n, EXO1_MAX_VALUE))
+        write_matrix(folder / f"B_{n}.txt",
+                     random_matrix(rng, n, n, EXO1_MAX_VALUE))
         print(f"exo1: n={n} done")
 
 
@@ -48,36 +43,44 @@ def generate_exo2(rng, out):
     for variant in ("non_tries", "tries"):
         (base / variant).mkdir(parents=True, exist_ok=True)
 
+    population = range(EXO2_MAX_VALUE + 1)
     index = []
+    case_id = 0
 
-    def add_case(serie, case_id, matrix, b_rows, b_cols, a_name, b_name, write_a):
-        n, m = len(matrix), len(matrix[0])
-        row, col = n - b_rows, m - b_cols
-        sorted_matrix = [sorted(line) for line in matrix]
-        for variant, content in (("non_tries", matrix), ("tries", sorted_matrix)):
-            if write_a:
-                write_matrix(base / variant / a_name, content)
-            b_matrix = block(content, row, col, b_rows, b_cols)
-            write_matrix(base / variant / b_name, b_matrix)
-            assert block(content, row, col, b_rows, b_cols) == b_matrix
-        index.append([serie, case_id, n, m, b_rows, b_cols, row, col, a_name, b_name])
-        print(f"exo2: {serie} case {case_id}: A={n}x{m}, B={b_rows}x{b_cols}")
+    for n in EXO2_A_SIZES:
+        m = n
+        b_sizes = EXO2_B_SIZES_BELOW if n < EXO2_THRESHOLD else EXO2_B_SIZES_FROM
+        keep = max(b_sizes)
+        tail_unsorted = deque(maxlen=keep)
+        tail_sorted = deque(maxlen=keep)
+        a_name = f"A_{n}x{m}.txt"
 
-    b_rows, b_cols = EXO2_VAR_A_B_SIZE
-    for case_id, (n, m) in enumerate(EXO2_VAR_A_SIZES, 1):
-        matrix = random_matrix(rng, n, m, EXO2_MAX_VALUE)
-        add_case("varA", case_id, matrix, b_rows, b_cols,
-                 f"varA_A_{n}x{m}.txt", f"varA_B_{b_rows}x{b_cols}_for_{n}x{m}.txt", True)
+        with open(base / "non_tries" / a_name, "w") as file_unsorted, \
+                open(base / "tries" / a_name, "w") as file_sorted:
+            file_unsorted.write(f"{n} {m}\n")
+            file_sorted.write(f"{n} {m}\n")
+            for _ in range(n):
+                row = rng.choices(population, k=m)
+                sorted_row = sorted(row)
+                file_unsorted.write(" ".join(map(str, row)) + "\n")
+                file_sorted.write(" ".join(map(str, sorted_row)) + "\n")
+                tail_unsorted.append(row[-keep:])
+                tail_sorted.append(sorted_row[-keep:])
 
-    n, m = EXO2_VAR_B_A_SIZE
-    matrix = random_matrix(rng, n, m, EXO2_MAX_VALUE)
-    a_name = f"varB_A_{n}x{m}.txt"
-    for case_id, (b_rows, b_cols) in enumerate(EXO2_VAR_B_SIZES, 1):
-        add_case("varB", case_id, matrix, b_rows, b_cols,
-                 a_name, f"varB_B_{b_rows}x{b_cols}.txt", case_id == 1)
+        for size in b_sizes:
+            case_id += 1
+            b_name = f"B_{size}x{size}_in_{n}x{m}.txt"
+            block_unsorted = [line[-size:]
+                              for line in list(tail_unsorted)[-size:]]
+            block_sorted = [line[-size:] for line in list(tail_sorted)[-size:]]
+            write_matrix(base / "non_tries" / b_name, block_unsorted)
+            write_matrix(base / "tries" / b_name, block_sorted)
+            index.append([case_id, n, m, size, size, n -
+                         size, m - size, a_name, b_name])
+            print(f"exo2: case {case_id}: A={n}x{m}, B={size}x{size}")
 
     with open(base / "index.csv", "w") as file:
-        file.write("serie,id,n,m,n_b,m_b,row,col,A_file,B_file\n")
+        file.write("id,n,m,n_b,m_b,row,col,A_file,B_file\n")
         for line in index:
             file.write(",".join(map(str, line)) + "\n")
 
